@@ -1,0 +1,36 @@
+name: Sync upstream release
+on:
+  schedule:
+    - cron: '17 */6 * * *'
+  workflow_dispatch:
+permissions:
+  contents: write
+env:
+  UPSTREAM: storytold/vectorcraft
+  ASSET_PREFIX: vectorcraft-web
+  GH_TOKEN: ${{ github.token }}
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Update from latest upstream release
+        run: |
+          set -euo pipefail
+          latest=$(gh api "repos/$UPSTREAM/releases/latest" --jq .tag_name)
+          current=$(cat UPSTREAM_VERSION 2>/dev/null || true)
+          echo "upstream=$latest current=$current"
+          if [ "$latest" = "$current" ]; then exit 0; fi
+          tmp=$(mktemp -d)
+          gh release download "$latest" -R "$UPSTREAM" -p "$ASSET_PREFIX-*.zip" -D "$tmp"
+          unzip -q "$tmp"/*.zip -d "$tmp/out"
+          src=$(find "$tmp/out" -maxdepth 1 -mindepth 1 -type d | head -n1)
+          test -f "$src/index.html"
+          rsync -a --delete --exclude=.git --exclude=.github --exclude=SYNC.md --exclude=UPSTREAM_VERSION "$src"/ ./
+          echo "$latest" > UPSTREAM_VERSION
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Sync vectorcraft $latest"
+          git tag -f "$latest"
+          git push origin HEAD "refs/tags/$latest" --force
